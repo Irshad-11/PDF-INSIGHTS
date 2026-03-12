@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        python-version: [3.10]
+        node-version: [20]
+
+    steps:
+    # 1️⃣ Checkout repository
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    # 2️⃣ Setup Node.js
+    - name: Setup Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: ${{ matrix.node-version }}
+
+    # 3️⃣ Install Frontend Dependencies
+    - name: Install frontend dependencies
+      working-directory: ./frontend
+      run: |
+        npm ci
+
+    # 4️⃣ Build Frontend
+    - name: Build frontend
+      working-directory: ./frontend
+      run: |
+        npm run build
+
+    # 5️⃣ Setup Python
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    # 6️⃣ Install Backend Dependencies
+    - name: Install backend dependencies
+      working-directory: ./backend
+      run: |
+        python -m venv venv
+        source venv/bin/activate
+        pip install --upgrade pip
+        pip install -r requirements.txt || echo "No requirements.txt yet"
+
+    # 7️⃣ Test Flask Backend
+    - name: Test backend
+      working-directory: ./backend
+      run: |
+        source venv/bin/activate
+        python -c "from app import app; print('Flask app imported successfully!')"
