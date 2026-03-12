@@ -34,7 +34,7 @@
 - [How it Works](#how-it-works)
 - [Activity Diagram](#activity-diagram)
 - [Sequence Diagram](#sequence-diagram)
-- [Project Window (Gantt Chart)](#project-window-gantt-chart)
+- [Project Window](#project-window)
 - [Screenshots](#screenshots)
 - [Developer Info](#developer-info)
 
@@ -240,7 +240,7 @@ sequenceDiagram
 
 
 
-# Project Window (Gantt Chart)
+# Project Window
 
 The following timeline represents the **Minimum Viable Product (MVP)** development schedule for PDF Insights.
 
