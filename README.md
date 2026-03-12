@@ -15,7 +15,7 @@
 
 <br>
 
-![Repo Visitors](https://visitor-badge.laobi.icu/badge?page_id=Irshad-11.pdf-insights&left_color=3b0764&right_color=581c87)
+![Visitors](https://visitor-badge.laobi.icu/badge?page_id=Irshad-11.pdf-insights&left_color=navy&right_color=midnightblue)
 </div>
 
 
