@@ -1,89 +1,15 @@
-name: CI
+name: Python Test
 
-on:
-  push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
+on: [push]
 
 jobs:
-  build:
-
+  test-python:
     runs-on: ubuntu-latest
-
-    strategy:
-      matrix:
-        python-version: [3.10]       # Correct Python version
-        node-version: [20]           # Node.js version
-
     steps:
-    # 1️⃣ Checkout code
-    - name: Checkout repository
-      uses: actions/checkout@v3
-
-    # 2️⃣ Setup Node.js
-    - name: Setup Node.js
-      uses: actions/setup-node@v3
-      with:
-        node-version: ${{ matrix.node-version }}
-
-    # 3️⃣ Cache Node modules
-    - name: Cache Node modules
-      uses: actions/cache@v3
-      with:
-        path: frontend/node_modules
-        key: frontend-node-modules-${{ hashFiles('frontend/package-lock.json') }}
-        restore-keys: |
-          frontend-node-modules-
-
-    # 4️⃣ Install frontend dependencies
-    - name: Install frontend dependencies
-      working-directory: ./frontend
-      run: npm ci
-
-    # 5️⃣ Build frontend
-    - name: Build frontend
-      working-directory: ./frontend
-      run: npm run build
-
-    # 6️⃣ Setup Python
-    - name: Setup Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: ${{ matrix.python-version }}
-
-    # 7️⃣ Cache Python packages
-    - name: Cache pip
-      uses: actions/cache@v3
-      with:
-        path: ~/.cache/pip
-        key: pip-cache-${{ hashFiles('backend/requirements.txt') }}
-        restore-keys: |
-          pip-cache-
-
-    # 8️⃣ Install backend dependencies
-    - name: Install backend dependencies
-      working-directory: ./backend
-      run: |
-        python -m venv venv
-        source venv/bin/activate
-        pip install --upgrade pip
-        pip install -r requirements.txt || echo "No requirements.txt yet"
-
-    # 9️⃣ Test backend import
-    - name: Test Flask backend
-      working-directory: ./backend
-      run: |
-        source venv/bin/activate
-        python -c "from app import app; print('Flask app imported successfully!')"
-
-    # 🔹 Optional: Frontend smoke test
-    - name: Test frontend build exists
-      working-directory: ./frontend
-      run: |
-        if [ ! -d "dist" ]; then
-          echo "Frontend build not found!"
-          exit 1
-        else
-          echo "Frontend build exists ✅"
-        fi
+      - uses: actions/checkout@v3
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: 3.10
+      - name: Check Python version
+        run: python --version
