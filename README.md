@@ -15,7 +15,7 @@
 
 <br>
 
-![Visitors](https://img.shields.io/badge/dynamic/json?logo=github&label=Visitors&query=%24.total&url=https://api.itsmeow.dev/github-visitors/Irshad-11/pdf-insights&color=581c87&labelColor=3b0764)
+![Repo Visitors](https://visitor-badge.laobi.icu/badge?page_id=Irshad-11.pdf-insights&left_color=3b0764&right_color=581c87)
 </div>
 
 
