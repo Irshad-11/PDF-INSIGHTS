@@ -51,6 +51,18 @@ EMBED_DIM        = 384
 MAX_FILE_SIZE_MB = 50
 MAX_PAGES        = 1000
 
+# ── Load Pix2Tex (LaTeX-OCR) ONCE globally ───────────────────────────────────
+print("Loading Pix2Tex (LaTeX-OCR) model... (this may take 10-20 seconds on CPU)")
+try:
+    from pix2tex.cli import LatexOCR
+    latex_ocr = LatexOCR()          # ← loaded only once
+    PIX2TEX_AVAILABLE = True
+    print("✅ Pix2Tex model loaded successfully.")
+except Exception as e:
+    print(f"[WARN] Pix2Tex failed to load: {e}")
+    latex_ocr = None
+    PIX2TEX_AVAILABLE = False
+
 
 # ── Session helpers — pickle per session (survives restarts) ──────────────────
 
@@ -106,6 +118,7 @@ def ocr_page(page, dpi: int = 200):
     return text, confidence
 
 
+# ── PDF analysis pipeline ───────────────────────────────────────────────
 # ── PDF analysis pipeline ─────────────────────────────────────────────────────
 
 def analyze_pdf(pdf_bytes: bytes, math_mode: bool = False) -> dict:
@@ -131,6 +144,7 @@ def analyze_pdf(pdf_bytes: bytes, math_mode: bool = False) -> dict:
 
         print(f"  p{page_no+1}: {method} conf={confidence:.0f}")
 
+        # Chunk for semantic search
         for sent in text.replace("\n", " ").split(". "):
             s = sent.strip()
             if len(s) > 20:
@@ -146,25 +160,33 @@ def analyze_pdf(pdf_bytes: bytes, math_mode: bool = False) -> dict:
             "equations":   [],
         }
 
-        if math_mode and is_scanned:
+        # ==================== MATH DETECTION (Pix2Tex) ====================
+        if math_mode and PIX2TEX_AVAILABLE:
             try:
-                from pix2tex.cli import LatexOCR
-                lat   = LatexOCR()
-                mat2  = fitz.Matrix(150 / 72, 150 / 72)
-                pix2  = page.get_pixmap(matrix=mat2, colorspace=fitz.csRGB)
-                img2  = Image.frombytes("RGB", [pix2.width, pix2.height], pix2.samples)
-                latex = lat(img2)
-                if latex and len(latex) > 3:
+                # Run on ALL pages (not just scanned) - much better for research papers
+                mat2 = fitz.Matrix(150 / 72, 150 / 72)
+                pix2 = page.get_pixmap(matrix=mat2, colorspace=fitz.csRGB)
+                img2 = Image.frombytes("RGB", [pix2.width, pix2.height], pix2.samples)
+
+                latex = latex_ocr(img2)   # ← now fast because model is already loaded
+
+                # Stronger check for real LaTeX equations
+                if latex and len(latex.strip()) > 5 and ("\\" in latex or "{" in latex or "$" in latex):
                     page_info["has_equation"] = True
-                    page_info["equations"].append(latex)
+                    page_info["equations"].append(latex.strip())
+                    print(f"  p{page_no+1}: ✅ Found equation → {latex[:70]}...")
+                else:
+                    print(f"  p{page_no+1}: No equation detected")
+
             except Exception as e:
-                print(f"[Pix2Tex] p{page_no+1}: {e}")
+                print(f"[Pix2Tex] p{page_no+1} error: {e}")
+        # ==================================================================
 
         pages_data.append(page_info)
 
     doc.close()
 
-    # FAISS index
+    # FAISS index (unchanged)
     index_bytes = None
     chunk_texts = []
     chunk_pages_list = []
@@ -193,7 +215,6 @@ def analyze_pdf(pdf_bytes: bytes, math_mode: bool = False) -> dict:
         "chunk_pages":    chunk_pages_list,
         "faiss_index":    index_bytes,
     }
-
 
 # ── Routes ────────────────────────────────────────────────────────────────────
 
