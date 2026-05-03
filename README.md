@@ -186,7 +186,7 @@ PDF Insights follows a **multi-stage document processing pipeline**.
 The system highlights relevant content and OCR result can export as **Markdown** includes LaTeX format.
 
 > [!IMPORTANT]
-> For a detailed API and system architecture, Click the **full documentation**.
+> Contributors are Welcomed.
 
 
 
@@ -275,18 +275,20 @@ gantt
 ```
 
 
-# Screenshots
+## Screenshots
 
-Screenshots of the application interface will be added after the **UI development phase is completed**.
+| Feature | Preview |
+| :--- | :--- |
+| **Landing Page (Top view)** | ![Landing 1](https://raw.githubusercontent.com/Irshad-11/PDF-INSIGHTS/refs/heads/main/docs/screenshots/Landing1.png) |
+| **Landing Page (Hero)** | ![Landing 2](https://raw.githubusercontent.com/Irshad-11/PDF-INSIGHTS/refs/heads/main/docs/screenshots/Landing2.png) |
+| **PDF Upload Interface** | ![Upload](https://raw.githubusercontent.com/Irshad-11/PDF-INSIGHTS/refs/heads/main/docs/screenshots/LandingWithFileUpload.png) |
+| **Analyzer Dashboard** | ![Overview](https://raw.githubusercontent.com/Irshad-11/PDF-INSIGHTS/refs/heads/main/docs/screenshots/OverviewTab_Analyze.png) |
+| **PDF Pages View** | ![Pages View](https://raw.githubusercontent.com/Irshad-11/PDF-INSIGHTS/refs/heads/main/docs/screenshots/PagesTab_Analyze.png) |
+| **Keyword Search Analysis** | ![Keyword Search](https://raw.githubusercontent.com/Irshad-11/PDF-INSIGHTS/refs/heads/main/docs/screenshots/KeywordSearchTab_Analyze.png) |
+| **Semantic Search Results** | ![Semantic Search](https://raw.githubusercontent.com/Irshad-11/PDF-INSIGHTS/refs/heads/main/docs/screenshots/SemanticSearchTab_Analyze.png) |
 
-Planned screenshots include:
 
-* Landing page
-* PDF upload interface
-* Analyzer dashboard
-* Semantic search results
-* PDF highlight view
-* Markdown export output
+*Captions: Visual walkthrough of the PDF-INSIGHTS application from landing to deep semantic analysis.*
 
 
 
