@@ -58,7 +58,7 @@ export default function Analyzer() {
         <div className="flex-1" />
         <div className="flex items-center gap-2 border border-neutral-800 rounded-full px-3 py-1">
           <div className="w-1.5 h-1.5 rounded-full bg-neutral-400" />
-          <span className="text-xs text-neutral-500 truncate max-w-48">{analysis.filename}</span>
+          <span className="text-xs text-neutral-200 truncate max-w-48">{analysis.filename}</span>
         </div>
         <ExportButton sessionId={session_id} filename={analysis.filename} />
       </header>
@@ -70,7 +70,7 @@ export default function Analyzer() {
             key={tab}
             onClick={() => setActiveTab(tab)}
             className={`px-4 py-2.5 text-xs tracking-wide transition-colors relative ${
-              activeTab === tab ? "text-neutral-100" : "text-neutral-600 hover:text-neutral-400"
+              activeTab === tab ? "text-neutral-100" : "text-neutral-500 hover:text-neutral-400"
             }`}
           >
             {tab}

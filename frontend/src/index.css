@@ -7,3 +7,9 @@ body {
   color: #f4f4f5;
   font-family: 'Inter', system-ui, sans-serif;
 }
+
+.share-tech-regular {
+  font-family: "Share Tech", sans-serif;
+  font-weight: 400;
+  font-style: normal;
+}

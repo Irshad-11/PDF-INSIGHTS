@@ -7,15 +7,13 @@ os.environ["TOKENIZERS_PARALLELISM"]  = "false"
 import io
 import time
 import uuid
-import base64
-import shelve
 import pickle
 import tempfile
 import threading
 import traceback
 from pathlib import Path
 from datetime import datetime
-from flask import Flask, request, jsonify, send_file, make_response
+from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 import fitz          # PyMuPDF
 import pytesseract
@@ -34,10 +32,15 @@ CORS(app, supports_credentials=True,
 BASE_DIR      = Path(tempfile.gettempdir()) / "pdfinsights"
 BASE_DIR.mkdir(exist_ok=True)
 SESSIONS_DIR  = BASE_DIR / "sessions"   # one pickle file per session
-SESSIONS_DIR.mkdir(exist_ok=True)
-FAISS_TMP     = str(BASE_DIR / "faiss_tmp.idx")
+PDF_DIR       = BASE_DIR / "pdfs"       # actual PDF files on disk
+INDEX_DIR     = BASE_DIR / "indexes"    # FAISS indexes on disk (memory-mapped)
+
+for d in (SESSIONS_DIR, PDF_DIR, INDEX_DIR):
+    d.mkdir(exist_ok=True)
 
 print(f"[pdfinsights] Session dir: {SESSIONS_DIR}")
+print(f"[pdfinsights] PDF dir:     {PDF_DIR}")
+print(f"[pdfinsights] Index dir:   {INDEX_DIR}")
 
 # ── Thread lock (only for concurrent writes to same session) ──────────────────
 store_lock = threading.Lock()
@@ -64,13 +67,19 @@ except Exception as e:
     PIX2TEX_AVAILABLE = False
 
 
-# ── Session helpers — pickle per session (survives restarts) ──────────────────
+# ── Session helpers — pickle per session + disk files (low RAM) ───────────────
 
 def _session_path(sid: str) -> Path:
-    # Sanitise sid — only allow uuid chars
     safe = "".join(c for c in sid if c.isalnum() or c == "-")
     return SESSIONS_DIR / f"{safe}.pkl"
 
+def _pdf_path(sid: str) -> Path:
+    safe = "".join(c for c in sid if c.isalnum() or c == "-")
+    return PDF_DIR / f"{safe}.pdf"
+
+def _index_path(sid: str) -> Path:
+    safe = "".join(c for c in sid if c.isalnum() or c == "-")
+    return INDEX_DIR / f"{safe}.faiss"
 
 def get_session_data(sid: str) -> dict:
     p = _session_path(sid)
@@ -83,7 +92,6 @@ def get_session_data(sid: str) -> dict:
         print(f"[session] read error {sid}: {e}")
         return {}
 
-
 def set_session_data(sid: str, data: dict):
     p = _session_path(sid)
     with store_lock:
@@ -93,12 +101,15 @@ def set_session_data(sid: str, data: dict):
         except Exception as e:
             print(f"[session] write error {sid}: {e}")
 
-
 def delete_session(sid: str):
-    p = _session_path(sid)
     with store_lock:
-        if p.exists():
-            p.unlink()
+        for path in (_session_path(sid), _pdf_path(sid), _index_path(sid)):
+            if path.exists():
+                try:
+                    path.unlink()
+                    print(f"[cleanup] deleted {path.name}")
+                except Exception as e:
+                    print(f"[cleanup] error deleting {path}: {e}")
 
 
 # ── OCR helper ────────────────────────────────────────────────────────────────
@@ -118,13 +129,20 @@ def ocr_page(page, dpi: int = 200):
     return text, confidence
 
 
-# ── PDF analysis pipeline ───────────────────────────────────────────────
-# ── PDF analysis pipeline ─────────────────────────────────────────────────────
+# ── PDF analysis pipeline (NOW DISK-BASED — LOW RAM) ─────────────────────────
 
-def analyze_pdf(pdf_bytes: bytes, math_mode: bool = False) -> dict:
+def analyze_pdf(pdf_bytes: bytes, math_mode: bool = False, sid: str = None) -> dict:
+    if not sid:
+        raise ValueError("sid is required for disk storage")
+
     doc         = fitz.open(stream=pdf_bytes, filetype="pdf")
     total_pages = len(doc)
     print(f"[analyze_pdf] {total_pages} pages, math_mode={math_mode}")
+
+    # Save PDF to disk immediately (removes huge bytes from RAM/pickle)
+    pdf_path = _pdf_path(sid)
+    pdf_path.write_bytes(pdf_bytes)
+    print(f"[disk] PDF saved → {pdf_path.name} ({len(pdf_bytes)/1024/1024:.1f} MB)")
 
     pages_data = []
     all_chunks = []   # (page_no_1based, text)
@@ -163,21 +181,17 @@ def analyze_pdf(pdf_bytes: bytes, math_mode: bool = False) -> dict:
         # ==================== MATH DETECTION (Pix2Tex) ====================
         if math_mode and PIX2TEX_AVAILABLE:
             try:
-                # Run on ALL pages (not just scanned) - much better for research papers
                 mat2 = fitz.Matrix(150 / 72, 150 / 72)
                 pix2 = page.get_pixmap(matrix=mat2, colorspace=fitz.csRGB)
                 img2 = Image.frombytes("RGB", [pix2.width, pix2.height], pix2.samples)
+                latex = latex_ocr(img2)
 
-                latex = latex_ocr(img2)   # ← now fast because model is already loaded
-
-                # Stronger check for real LaTeX equations
                 if latex and len(latex.strip()) > 5 and ("\\" in latex or "{" in latex or "$" in latex):
                     page_info["has_equation"] = True
                     page_info["equations"].append(latex.strip())
                     print(f"  p{page_no+1}: ✅ Found equation → {latex[:70]}...")
                 else:
                     print(f"  p{page_no+1}: No equation detected")
-
             except Exception as e:
                 print(f"[Pix2Tex] p{page_no+1} error: {e}")
         # ==================================================================
@@ -186,23 +200,27 @@ def analyze_pdf(pdf_bytes: bytes, math_mode: bool = False) -> dict:
 
     doc.close()
 
-    # FAISS index (unchanged)
-    index_bytes = None
+    # ==================== FAISS on DISK (memory-mapped) ====================
+    faiss_path = None
     chunk_texts = []
     chunk_pages_list = []
 
     if all_chunks:
         chunk_texts      = [c[1] for c in all_chunks]
         chunk_pages_list = [c[0] for c in all_chunks]
-        print(f"[FAISS] encoding {len(chunk_texts)} chunks …")
-        emb = embedder.encode(chunk_texts, show_progress_bar=False, normalize_embeddings=True)
+
+        print(f"[FAISS] encoding {len(chunk_texts)} chunks (batch_size=64)...")
+        emb = embedder.encode(chunk_texts, show_progress_bar=False,
+                              batch_size=64, normalize_embeddings=True)
         emb = np.array(emb, dtype="float32")
+
         idx = faiss.IndexFlatIP(EMBED_DIM)
         idx.add(emb)
-        faiss.write_index(idx, FAISS_TMP)
-        with open(FAISS_TMP, "rb") as f:
-            index_bytes = base64.b64encode(f.read()).decode()
-        print("[FAISS] index built.")
+
+        faiss_path = _index_path(sid)
+        faiss.write_index(idx, str(faiss_path))
+        print(f"[FAISS] index saved to disk → {faiss_path.name} ({faiss_path.stat().st_size/1024:.1f} KB)")
+    # ====================================================================
 
     return {
         "total_pages":    total_pages,
@@ -213,8 +231,10 @@ def analyze_pdf(pdf_bytes: bytes, math_mode: bool = False) -> dict:
         "pages":          pages_data,
         "chunks":         chunk_texts,
         "chunk_pages":    chunk_pages_list,
-        "faiss_index":    index_bytes,
+        "faiss_path":     str(faiss_path) if faiss_path else None,
+        "pdf_path":       str(pdf_path),
     }
+
 
 # ── Routes ────────────────────────────────────────────────────────────────────
 
@@ -252,7 +272,7 @@ def upload_pdf():
     start = time.time()
 
     try:
-        result = analyze_pdf(pdf_bytes, math_mode=math_mode)
+        result = analyze_pdf(pdf_bytes, math_mode=math_mode, sid=sid)
     except Exception as e:
         print("[ERROR] analyze_pdf:")
         traceback.print_exc()
@@ -266,17 +286,16 @@ def upload_pdf():
         "math_mode":       math_mode,
         "uploaded_at":     datetime.utcnow().isoformat(),
         "session_id":      sid,
-        "pdf_bytes":       pdf_bytes,   # kept for /api/pdf/<sid>
     })
 
     # Persist to disk — survives server restarts
     set_session_data(sid, result)
-    print(f"[upload] sid={sid} saved to {_session_path(sid)} in {elapsed}s")
+    print(f"[upload] sid={sid} saved in {elapsed}s")
 
-    # Return summary (exclude heavy binary fields from JSON response)
+    # Return summary (exclude heavy lists from JSON response)
     summary = {
         k: v for k, v in result.items()
-        if k not in ("chunks", "chunk_pages", "faiss_index", "pages", "pdf_bytes")
+        if k not in ("chunks", "chunk_pages", "pages", "pdf_path", "faiss_path")
     }
     summary["pages_summary"] = result["pages"]   # full page objects with text
     return jsonify({"session_id": sid, "analysis": summary})
@@ -284,24 +303,23 @@ def upload_pdf():
 
 @app.route("/api/pdf/<sid>", methods=["GET"])
 def serve_pdf(sid):
-    """Stream raw PDF bytes to the browser pdfjs viewer."""
+    """Serve PDF from disk (low RAM)."""
     data = get_session_data(sid)
     if not data:
-        print(f"[serve_pdf] sid={sid} NOT FOUND in {SESSIONS_DIR}")
+        print(f"[serve_pdf] sid={sid} NOT FOUND")
         return jsonify({"error": "Session not found — please re-upload the PDF"}), 404
 
-    pdf_bytes = data.get("pdf_bytes")
-    if not pdf_bytes:
-        return jsonify({"error": "PDF bytes missing from session"}), 404
+    pdf_path = Path(data.get("pdf_path", ""))
+    if not pdf_path.exists():
+        return jsonify({"error": "PDF file not found on disk"}), 404
 
-    resp = make_response(bytes(pdf_bytes))
-    resp.headers["Content-Type"]        = "application/pdf"
-    resp.headers["Content-Disposition"] = f'inline; filename="{data.get("filename","doc.pdf")}"'
-    resp.headers["Content-Length"]      = str(len(pdf_bytes))
-    resp.headers["Cache-Control"]       = "no-store"
-    resp.headers["Access-Control-Allow-Origin"] = "*"
-    print(f"[serve_pdf] sid={sid} → {len(pdf_bytes)} bytes")
-    return resp
+    print(f"[serve_pdf] sid={sid} → {pdf_path.name}")
+    return send_file(
+        str(pdf_path),
+        mimetype="application/pdf",
+        as_attachment=False,
+        download_name=data.get("filename", "document.pdf")
+    )
 
 
 @app.route("/api/page-text/<sid>/<int:page_no>", methods=["GET"])
@@ -373,19 +391,16 @@ def semantic_search():
     if not data:
         return jsonify({"error": "Session not found. Re-upload the PDF."}), 404
 
-    faiss_b64   = data.get("faiss_index")
-    chunks      = data.get("chunks", [])
-    chunk_pages = data.get("chunk_pages", [])
+    faiss_path_str = data.get("faiss_path")
+    chunks         = data.get("chunks", [])
+    chunk_pages    = data.get("chunk_pages", [])
 
-    if not faiss_b64 or not chunks:
-        return jsonify({"error": "No search index. Re-upload the PDF."}), 400
+    if not faiss_path_str or not Path(faiss_path_str).exists():
+        return jsonify({"error": "No search index found. Re-upload the PDF."}), 400
 
     try:
-        idx_bytes = base64.b64decode(faiss_b64)
-        load_path = FAISS_TMP + ".load"
-        with open(load_path, "wb") as f:
-            f.write(idx_bytes)
-        index_obj = faiss.read_index(load_path)
+        # MEMORY-MAPPED FAISS → almost zero extra RAM usage
+        index_obj = faiss.read_index(faiss_path_str, faiss.IO_FLAG_MMAP)
 
         q_emb   = embedder.encode([query], normalize_embeddings=True)
         q_emb   = np.array(q_emb, dtype="float32")
@@ -482,5 +497,4 @@ def list_sessions():
 if __name__ == "__main__":
     print(f"[pdfinsights] sessions stored at: {SESSIONS_DIR}")
     # debug=False removes ALL auto-reload behaviour — sessions in memory are never wiped
-    # If you need to see errors, check the terminal output directly
     app.run(debug=False, port=5000)

@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { Upload, FileText, Zap, Search, BookOpen, ChevronRight, AlertCircle } from "lucide-react";
+import { Upload, BookType, Zap, Search, BookOpen, ChevronRight, AlertCircle } from "lucide-react";
 
 export default function Landing() {
   const navigate = useNavigate();
@@ -65,7 +65,7 @@ export default function Landing() {
   };
 
   const features = [
-    { icon: <FileText size={20} />, title: "Smart OCR", desc: "Auto-detects scanned vs text PDFs with confidence metrics" },
+    { icon: <BookType size={20} />, title: "Smart OCR", desc: "Auto-detects scanned vs text PDFs with confidence metrics" },
     { icon: <Search size={20} />, title: "Semantic Search", desc: "Find content by meaning, not just keywords" },
     { icon: <Zap size={20} />, title: "Equation Extraction", desc: "Detects math and converts to LaTeX automatically" },
     { icon: <BookOpen size={20} />, title: "Markdown Export", desc: "Export with full LaTeX support and metadata headers" },
@@ -86,11 +86,11 @@ export default function Landing() {
       <header className="relative border-b border-neutral-800 px-8 py-5 flex items-center justify-between">
         <div className="flex items-center gap-3">
           <div className="w-7 h-7 bg-neutral-100 rounded-sm flex items-center justify-center">
-            <FileText size={14} className="text-neutral-950" />
+            <BookType size={20} className="text-neutral-950" />
           </div>
-          <span className="text-sm font-bold tracking-[0.2em] uppercase text-neutral-100">PDF Insights</span>
+          <span className="text-2xl font-bold share-tech-regular uppercase text-neutral-100">PDF Insights</span>
         </div>
-        <span className="text-xs text-neutral-600 tracking-widest uppercase">Smart PDF Analyzer</span>
+        <span className="text-xs text-neutral-400 tracking-widest uppercase">Smart PDF Analyzer</span>
       </header>
 
       <main className="relative max-w-4xl mx-auto px-6 pt-24 pb-20">
@@ -136,7 +136,7 @@ export default function Landing() {
             {file ? (
               <div className="flex flex-col items-center gap-4">
                 <div className="w-12 h-12 border border-neutral-700 rounded-lg flex items-center justify-center">
-                  <FileText size={22} className="text-neutral-300" />
+                  <BookType size={22} className="text-neutral-300" />
                 </div>
                 <div>
                   <p className="text-neutral-200 font-medium text-sm">{file.name}</p>
@@ -172,7 +172,7 @@ export default function Landing() {
               onClick={() => setMathMode((m) => !m)}
               className={`relative w-11 h-6 rounded-full transition-colors duration-200 flex-shrink-0 ${mathMode ? "bg-neutral-300" : "bg-neutral-800"}`}
             >
-              <span className={`absolute top-1 w-4 h-4 bg-neutral-950 rounded-full transition-transform duration-200 ${mathMode ? "translate-x-6" : "translate-x-1"}`} />
+              <span className={`absolute top-1 left-0 w-4 h-4 bg-neutral-950 rounded-full transition-transform duration-200 ${mathMode ? "translate-x-6" : "translate-x-1"}`} />
             </button>
           </div>
 
@@ -224,8 +224,8 @@ export default function Landing() {
 
       {/* Footer */}
       <footer className="relative border-t border-neutral-900 px-8 py-5 flex items-center justify-between">
-        <span className="text-xs text-neutral-700">PDF Insights · PROG 112 · UFTB</span>
-        <span className="text-xs text-neutral-700">Irshad Hossain · 2303030</span>
+        <span className="text-xs text-neutral-500">PDF Insights · Course PROG 112 · SWE, UFTB</span>
+        <span className="text-xs text-neutral-500">Irshad Hossain · ID 2303030</span>
       </footer>
     </div>
   );

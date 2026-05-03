@@ -7,17 +7,14 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
   import.meta.url
 ).toString();
 
-// ── Utility: find all occurrences of searchStr in items ──────────────────────
 function findTextRects(textContent, searchStr) {
   if (!searchStr || searchStr.length < 2) return [];
   const needle = searchStr.toLowerCase().trim();
-  const rects  = [];
+  const rects = [];
 
-  // Build a flat char map: char → { itemIndex, charIndexInItem }
   const items = textContent.items.filter((i) => i.str);
-  // Concatenate all text with item boundaries
-  let combined    = "";
-  const charMap   = []; // combined index → { item, charPos }
+  let combined = "";
+  const charMap = [];
 
   for (let i = 0; i < items.length; i++) {
     const str = items[i].str;
@@ -25,7 +22,6 @@ function findTextRects(textContent, searchStr) {
       charMap.push({ itemIndex: i, charPos: c });
       combined += str[c];
     }
-    // Space between items
     charMap.push({ itemIndex: i, charPos: -1 });
     combined += " ";
   }
@@ -36,7 +32,6 @@ function findTextRects(textContent, searchStr) {
     const found = lowerCombined.indexOf(needle, searchFrom);
     if (found === -1) break;
 
-    // Collect unique items touched by this match
     const touchedItems = new Set();
     for (let k = found; k < found + needle.length; k++) {
       if (charMap[k] && charMap[k].charPos !== -1) {
@@ -44,78 +39,109 @@ function findTextRects(textContent, searchStr) {
       }
     }
 
-    touchedItems.forEach((idx) => {
-      rects.push(items[idx]);
-    });
-
+    touchedItems.forEach((idx) => rects.push(items[idx]));
     searchFrom = found + needle.length;
   }
-
   return rects;
 }
 
-// ── Draw highlight overlays on a canvas using PDF coordinate space ────────────
-async function drawPageHighlights(page, viewport, overlayDiv, searchTerms, isActivePage) {
+async function drawPageHighlights(page, viewport, overlayDiv, searchTerms, preciseHighlightText, isActivePage) {
   overlayDiv.innerHTML = "";
-  if (!searchTerms || searchTerms.length === 0) return;
+  console.log("searchTerms:", searchTerms);
+
+  if (!searchTerms || !Array.isArray(searchTerms) || searchTerms.length === 0) {
+    return;
+  }
 
   const textContent = await page.getTextContent();
+  console.log("text items count:", textContent?.items?.length);
+
+  // 🛡️ guard against broken textContent
+  if (!textContent || !Array.isArray(textContent.items)) {
+    return;
+  }
 
   for (const term of searchTerms) {
+    if (!term) continue;
+
     const matchedItems = findTextRects(textContent, term);
+    console.log("term:", term, "matches:", matchedItems?.length);
+
+    // 🛡️ safety
+    if (!Array.isArray(matchedItems) || matchedItems.length === 0) continue;
+
+    const isPrecise =
+      preciseHighlightText &&
+      term.toLowerCase().trim() === preciseHighlightText.toLowerCase().trim();
 
     for (const item of matchedItems) {
-      if (!item.transform) continue;
+      console.log("drawing highlight...");
+      if (!item || !item.transform) continue;
 
-      // pdfjs transform: [scaleX, skewY, skewX, scaleY, translateX, translateY]
-      // translateX/Y are in PDF user space (bottom-left origin)
-      // viewport.transform converts PDF space → canvas space (top-left origin)
-      const [, , , , pdfX, pdfY] = item.transform;
+      const transform = item.transform;
 
-      // Map PDF coordinates to viewport (canvas) coordinates
-      const [vx, vy] = pdfjsLib.Util.applyTransform([pdfX, pdfY], viewport.transform);
+      // 🛡️ avoid destructure crash
+      if (!Array.isArray(transform) || transform.length < 6) continue;
 
-      // Item dimensions in viewport space
-      const itemWidth  = item.width  * viewport.scale;
-      const itemHeight = Math.abs(item.height) * viewport.scale || 14 * viewport.scale;
+      const pdfX = transform[4];
+      const pdfY = transform[5];
 
-      // vx,vy is the bottom-left corner of the text in canvas coords
-      // Canvas origin is top-left, so top = vy - itemHeight
+      const point = pdfjsLib.Util.applyTransform([pdfX, pdfY], viewport.transform);
+      if (!point || point.length < 2) continue;
+
+      const vx = point[0];
+      const vy = point[1];
+
+      const itemWidth = (item.width || 0) * viewport.scale;
+      const itemHeight = Math.abs(item.height || 10) * viewport.scale;
+
       const div = document.createElement("div");
-      div.style.position   = "absolute";
-      div.style.left       = vx + "px";
-      div.style.top        = (vy - itemHeight) + "px";
-      div.style.width      = itemWidth + "px";
-      div.style.height     = itemHeight + "px";
-      div.style.background = isActivePage
-        ? "rgba(255, 220, 0, 0.55)"
-        : "rgba(255, 220, 0, 0.28)";
-      div.style.borderRadius   = "2px";
-      div.style.pointerEvents  = "none";
-      div.style.mixBlendMode   = "multiply";
-      div.style.transition     = "background 0.2s";
+      div.style.position = "absolute";
+      div.style.left = `${vx}px`;
+      div.style.top = `${vy - itemHeight}px`;
+      div.style.width = `${itemWidth}px`;
+      div.style.height = `${itemHeight}px`;
+      div.style.borderRadius = "3px";
+      div.style.pointerEvents = "none";
+      div.style.mixBlendMode = "multiply";
+
+      if (isPrecise && isActivePage) {
+        div.style.background = "rgba(255, 100, 0, 0.85)";
+        div.style.boxShadow = "0 0 0 4px rgba(255, 180, 0, 0.7)";
+      } else {
+        div.style.background = isActivePage
+          ? "rgba(255, 220, 0, 0.55)"
+          : "rgba(255, 220, 0, 0.28)";
+      }
+
       overlayDiv.appendChild(div);
     }
   }
 }
 
-// ── Component ─────────────────────────────────────────────────────────────────
+export default function PDFViewer({
+  fileData,
+  highlights = [],
+  activePage = null,
+  preciseHighlightText = null,
+}) {
+  const renderId = useRef(0);
 
-export default function PDFViewer({ fileData, highlights = [], activePage = null }) {
-  const containerRef   = useRef(null);
-  const pdfRef         = useRef(null);
-  const pageRefs       = useRef({});   // pageNo → { wrapper, canvas, overlay, rendered }
-  const renderQueue    = useRef([]);
-  const rendering      = useRef(false);
-  const [totalPages,   setTotalPages]   = useState(0);
-  const [currentPage,  setCurrentPage]  = useState(1);
-  const [scale,        setScale]        = useState(1.4);
-  const [loading,      setLoading]      = useState(true);
-  const [error,        setError]        = useState("");
+  const containerRef = useRef(null);
+  const pdfRef = useRef(null);
+  const pageRefs = useRef({});
+  const renderQueue = useRef([]);
+  const rendering = useRef(false);
 
-  // ── Load PDF ───────────────────────────────────────────────────────────────
+  const [totalPages, setTotalPages] = useState(0);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [scale, setScale] = useState(1.4);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
   useEffect(() => {
     if (!fileData) return;
+
     setLoading(true);
     setError("");
     pageRefs.current = {};
@@ -125,9 +151,9 @@ export default function PDFViewer({ fileData, highlights = [], activePage = null
     setTotalPages(0);
     setCurrentPage(1);
 
-    pdfjsLib.getDocument({ url: fileData, withCredentials: false })
-      .promise
-      .then((pdf) => {
+    pdfjsLib
+      .getDocument({ url: fileData, withCredentials: false })
+      .promise.then((pdf) => {
         pdfRef.current = pdf;
         setTotalPages(pdf.numPages);
         setLoading(false);
@@ -138,31 +164,31 @@ export default function PDFViewer({ fileData, highlights = [], activePage = null
       });
   }, [fileData]);
 
-  // ── Render a single page ───────────────────────────────────────────────────
   const renderPage = useCallback(async (pageNo) => {
     if (!pdfRef.current) return;
+
     const refs = pageRefs.current[pageNo];
     if (!refs || refs.rendered) return;
 
-    refs.rendered = true; // mark before async to prevent double-render
+    refs.rendered = true;
+    const currentRender = ++renderId.current;
 
     try {
-      const page     = await pdfRef.current.getPage(pageNo);
+      const page = await pdfRef.current.getPage(pageNo);
       const viewport = page.getViewport({ scale });
 
       const { canvas, overlay } = refs;
       if (!canvas) return;
 
-      // Use device pixel ratio for crisp rendering
       const dpr = window.devicePixelRatio || 1;
-      canvas.width  = Math.floor(viewport.width  * dpr);
+
+      canvas.width = Math.floor(viewport.width * dpr);
       canvas.height = Math.floor(viewport.height * dpr);
-      canvas.style.width  = viewport.width  + "px";
+      canvas.style.width = viewport.width + "px";
       canvas.style.height = viewport.height + "px";
 
-      // Overlay matches canvas CSS size exactly
       if (overlay) {
-        overlay.style.width  = viewport.width  + "px";
+        overlay.style.width = viewport.width + "px";
         overlay.style.height = viewport.height + "px";
       }
 
@@ -171,62 +197,83 @@ export default function PDFViewer({ fileData, highlights = [], activePage = null
 
       await page.render({ canvasContext: ctx, viewport }).promise;
 
-      // Draw highlights
+      // kill outdated render
+      if (currentRender !== renderId.current) return;
+
       if (overlay) {
-        const pageHighlights = highlights.filter((h) => h.page === pageNo);
-        const terms = pageHighlights.map((h) => h.text).filter(Boolean);
+        const safeHighlights = Array.isArray(highlights) ? highlights : [];
+
+        const pageHighlights = safeHighlights.filter((h) => h?.page === pageNo);
+
+        const terms = pageHighlights.map((h) => h?.text).filter(Boolean);
+
         if (terms.length > 0) {
-          await drawPageHighlights(page, viewport, overlay, terms, activePage === pageNo);
+          await drawPageHighlights(
+            page,
+            viewport,
+            overlay,
+            terms,
+            preciseHighlightText,
+            activePage === pageNo
+          );
         }
       }
     } catch (e) {
       const refs2 = pageRefs.current[pageNo];
-      if (refs2) refs2.rendered = false; // allow retry on error
+      if (refs2) refs2.rendered = false;
       console.error("Render error page", pageNo, e);
     }
-  }, [scale, highlights, activePage]);
+  }, [scale, highlights, activePage, preciseHighlightText]);
 
-  // ── Process render queue ───────────────────────────────────────────────────
   const processQueue = useCallback(async () => {
     if (rendering.current) return;
     rendering.current = true;
+
     while (renderQueue.current.length > 0) {
       const pageNo = renderQueue.current.shift();
       await renderPage(pageNo);
     }
+
     rendering.current = false;
   }, [renderPage]);
 
   const enqueueRender = useCallback((pageNo) => {
     if (!renderQueue.current.includes(pageNo)) {
-      renderQueue.current.unshift(pageNo); // priority: newest first
+      renderQueue.current.unshift(pageNo);
     }
     processQueue();
   }, [processQueue]);
 
-  // ── Re-render all when scale/highlights change ─────────────────────────────
   useEffect(() => {
     if (!pdfRef.current || loading) return;
-    // Reset rendered flags → force re-render
-    Object.values(pageRefs.current).forEach((r) => { r.rendered = false; });
-    renderQueue.current = [];
-    // Re-enqueue all currently mounted pages
-    Object.keys(pageRefs.current).forEach((pNo) => enqueueRender(parseInt(pNo)));
-  }, [scale, highlights, activePage, enqueueRender, loading]);
 
-  // ── Scroll to activePage ───────────────────────────────────────────────────
+    Object.values(pageRefs.current).forEach((r) => {
+      r.rendered = false;
+    });
+
+    renderQueue.current = [];
+
+    Object.keys(pageRefs.current).forEach((pNo) =>
+      enqueueRender(parseInt(pNo))
+    );
+  }, [scale, highlights, activePage, preciseHighlightText, enqueueRender, loading]);
+
   useEffect(() => {
     if (!activePage || !containerRef.current) return;
-    const el = containerRef.current.querySelector(`[data-page="${activePage}"]`);
+
+    const el = containerRef.current.querySelector(
+      `[data-page="${activePage}"]`
+    );
+
     if (el) {
       el.scrollIntoView({ behavior: "smooth", block: "start" });
       setCurrentPage(activePage);
     }
   }, [activePage]);
 
-  // ── Track current page via IntersectionObserver ────────────────────────────
   useEffect(() => {
     if (!containerRef.current || totalPages === 0) return;
+
     const observer = new IntersectionObserver(
       (entries) => {
         entries.forEach((entry) => {
@@ -237,16 +284,22 @@ export default function PDFViewer({ fileData, highlights = [], activePage = null
       },
       { root: containerRef.current, threshold: 0.3 }
     );
-    containerRef.current.querySelectorAll("[data-page]").forEach((el) => observer.observe(el));
+
+    containerRef.current
+      .querySelectorAll("[data-page]")
+      .forEach((el) => observer.observe(el));
+
     return () => observer.disconnect();
   }, [totalPages]);
 
   const scrollTo = (pNo) => {
-    const el = containerRef.current?.querySelector(`[data-page="${pNo}"]`);
+    const el = containerRef.current?.querySelector(
+      `[data-page="${pNo}"]`
+    );
     if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
   };
 
-  const matchedPages = new Set(highlights.map((h) => h.page));
+  const matchedPages = new Set((highlights || []).map((h) => h?.page));
 
   if (error) {
     return (
@@ -261,138 +314,73 @@ export default function PDFViewer({ fileData, highlights = [], activePage = null
 
   return (
     <div className="flex flex-col h-full bg-neutral-900 border border-neutral-800 rounded-lg overflow-hidden">
-      {/* ── Toolbar ─────────────────────────────────────────────────────────── */}
       <div className="flex items-center justify-between px-3 py-2 border-b border-neutral-800 bg-neutral-950 flex-shrink-0">
-        {/* Page nav */}
         <div className="flex items-center gap-1">
-          <button
-            onClick={() => scrollTo(Math.max(1, currentPage - 1))}
-            disabled={currentPage <= 1}
-            className="p-1.5 rounded hover:bg-neutral-800 text-neutral-500 hover:text-neutral-300 disabled:opacity-30 transition-colors"
-          >
+          <button onClick={() => scrollTo(Math.max(1, currentPage - 1))} disabled={currentPage <= 1}>
             <ChevronUp size={13} />
           </button>
-          <span className="text-xs text-neutral-500 px-1.5 tabular-nums min-w-14 text-center">
-            {currentPage} / {totalPages || "—"}
-          </span>
-          <button
-            onClick={() => scrollTo(Math.min(totalPages, currentPage + 1))}
-            disabled={currentPage >= totalPages}
-            className="p-1.5 rounded hover:bg-neutral-800 text-neutral-500 hover:text-neutral-300 disabled:opacity-30 transition-colors"
-          >
+          <span>{currentPage} / {totalPages || "—"}</span>
+          <button onClick={() => scrollTo(Math.min(totalPages, currentPage + 1))} disabled={currentPage >= totalPages}>
             <ChevronDown size={13} />
           </button>
         </div>
 
-        {/* Zoom */}
         <div className="flex items-center gap-1">
-          <button
-            onClick={() => setScale((s) => Math.max(0.6, parseFloat((s - 0.2).toFixed(1))))}
-            className="p-1.5 rounded hover:bg-neutral-800 text-neutral-500 hover:text-neutral-300 transition-colors"
-          >
+          <button onClick={() => setScale((s) => Math.max(0.6, s - 0.2))}>
             <ZoomOut size={13} />
           </button>
-          <span className="text-xs text-neutral-600 w-10 text-center tabular-nums">
-            {Math.round(scale * 100)}%
-          </span>
-          <button
-            onClick={() => setScale((s) => Math.min(3.0, parseFloat((s + 0.2).toFixed(1))))}
-            className="p-1.5 rounded hover:bg-neutral-800 text-neutral-500 hover:text-neutral-300 transition-colors"
-          >
+          <span>{Math.round(scale * 100)}%</span>
+          <button onClick={() => setScale((s) => Math.min(3.0, s + 0.2))}>
             <ZoomIn size={13} />
           </button>
         </div>
 
-        {/* Match count */}
         {matchedPages.size > 0 && (
-          <div className="flex items-center gap-1.5">
-            <div className="w-2.5 h-2.5 rounded-sm bg-yellow-400/70" />
-            <span className="text-xs text-neutral-600">
-              {matchedPages.size} page{matchedPages.size !== 1 ? "s" : ""}
-            </span>
-          </div>
+          <div>{matchedPages.size} pages</div>
         )}
       </div>
 
-      {/* ── Pages ───────────────────────────────────────────────────────────── */}
-      <div
-        ref={containerRef}
-        className="flex-1 overflow-y-auto py-4 px-3 space-y-3"
-        style={{ scrollbarWidth: "thin", scrollbarColor: "#3a3a3a transparent" }}
-      >
+      <div ref={containerRef} className="flex-1 overflow-y-auto py-4 px-3 space-y-3">
         {loading && (
           <div className="flex flex-col items-center justify-center h-48 gap-3">
-            <Loader size={18} className="text-neutral-600 animate-spin" />
-            <span className="text-xs text-neutral-600">Loading PDF...</span>
+            <Loader size={18} className="animate-spin" />
+            <span>Loading PDF...</span>
           </div>
         )}
 
-        {!loading && Array.from({ length: totalPages }, (_, i) => i + 1).map((pageNo) => {
-          const hasMatch = matchedPages.has(pageNo);
-          const isActive = activePage === pageNo;
-
-          return (
-            <div
-              key={pageNo}
-              data-page={pageNo}
-              className={`relative rounded overflow-hidden transition-all duration-200 ${
-                isActive
-                  ? "ring-2 ring-yellow-400/70 shadow-lg shadow-yellow-400/10"
-                  : hasMatch
-                  ? "ring-1 ring-yellow-400/25"
-                  : "ring-1 ring-neutral-800"
-              }`}
-            >
-              {/* Page number badge */}
-              <div
-                className={`absolute top-2 left-2 z-20 text-[10px] px-1.5 py-0.5 rounded font-mono leading-none ${
-                  isActive
-                    ? "bg-yellow-400 text-neutral-950 font-bold"
-                    : "bg-neutral-900/80 text-neutral-500"
-                }`}
-              >
-                {pageNo}
-              </div>
-
-              {/* Match badge */}
-              {hasMatch && (
-                <div className="absolute top-2 right-2 z-20 bg-yellow-400/20 border border-yellow-400/40 text-yellow-300 text-[10px] px-1.5 py-0.5 rounded font-mono leading-none">
-                  match
-                </div>
-              )}
-
-              {/* Canvas + highlight overlay */}
+        {!loading &&
+          Array.from({ length: totalPages }, (_, i) => i + 1).map((pageNo) => (
+            <div key={pageNo} data-page={pageNo} className="relative">
               <div className="relative bg-white">
                 <canvas
-                  ref={(el) => {
-                    if (!el) return;
-                    if (!pageRefs.current[pageNo]) pageRefs.current[pageNo] = {};
-                    pageRefs.current[pageNo].canvas = el;
-                    if (pdfRef.current && !pageRefs.current[pageNo].rendered) {
-                      enqueueRender(pageNo);
-                    }
-                  }}
-                  style={{ display: "block" }}
-                />
-                {/* Highlight overlay — sits exactly over the canvas */}
-                <div
-                  ref={(el) => {
-                    if (!el) return;
-                    if (!pageRefs.current[pageNo]) pageRefs.current[pageNo] = {};
-                    pageRefs.current[pageNo].overlay = el;
-                  }}
-                  style={{
-                    position: "absolute",
-                    top: 0,
-                    left: 0,
-                    pointerEvents: "none",
-                    overflow: "hidden",
-                  }}
-                />
+  ref={(el) => {
+    if (!pageRefs.current[pageNo]) {
+      pageRefs.current[pageNo] = {};
+    }
+    pageRefs.current[pageNo].canvas = el;
+  }}
+/>
+
+<div
+  ref={(el) => {
+    if (!pageRefs.current[pageNo]) {
+      pageRefs.current[pageNo] = {};
+    }
+    pageRefs.current[pageNo].overlay = el;
+  }}
+  style={{
+    position: "absolute",
+    top: 0,
+    left: 0,
+    width: "100%",
+    height: "100%",
+    pointerEvents: "none",
+    zIndex: 10
+  }}
+/>
               </div>
             </div>
-          );
-        })}
+          ))}
       </div>
     </div>
   );

@@ -153,10 +153,10 @@ export default function PageList({ sessionId, analysis }) {
     <div>
       <div className="flex items-center justify-between mb-5">
         <div>
-          <h2 className="text-xs font-medium text-neutral-500 tracking-widest uppercase mb-1">
+          <h2 className="text-xs font-medium text-neutral-300 tracking-widest uppercase mb-1">
             Page Details
           </h2>
-          <p className="text-xs text-neutral-700">Expand any page to view its extracted text</p>
+          <p className="text-xs text-neutral-600">Expand any page to view its extracted text</p>
         </div>
         <div className="flex gap-1 flex-wrap justify-end">
           {filters.map((f) => (
